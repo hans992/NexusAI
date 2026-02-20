@@ -3,6 +3,7 @@
 import { getPineconeClient, getIndexName } from "@/lib/vector-db";
 import { splitTextIntoChunks } from "@/lib/text-splitter";
 import { embedTexts } from "@/lib/gemini-embeddings";
+import { describePdfWithVision } from "@/lib/gemini-vision";
 
 /**
  * Gemini text-embedding-004 produces 768-dimensional vectors.
@@ -38,14 +39,18 @@ export async function ingestFromFileUrl(
     if (buffer.length > MAX_FILE_SIZE_BYTES) {
       return { success: false, error: "File too large." };
     }
-    const { text, pageNumber } = await extractTextFromBuffer(buffer, fileName);
+    const { text, pageNumber, visionDescription } = await extractTextFromBuffer(buffer, fileName);
 
     if (!text?.trim()) {
       return { success: false, error: "No text could be extracted from the file." };
     }
 
     const chunks = splitTextIntoChunks(text, 1000, 200);
-    const embeddings = await embedTexts(chunks.map((c) => c.text));
+    const visionPrefix = visionDescription ? `[Vision: ${visionDescription}]\n\n` : "";
+    const textsForEmbed = chunks.map((c, i) =>
+      i === 0 && visionPrefix ? visionPrefix + c.text : c.text
+    );
+    const embeddings = await embedTexts(textsForEmbed);
 
     const indexName = getIndexName();
     const pinecone = getPineconeClient();
@@ -57,7 +62,8 @@ export async function ingestFromFileUrl(
       metadata: {
         fileName,
         pageNumber: pageNumber ?? 1,
-        text: chunk.text.slice(0, 1000),
+        text: (i === 0 && visionPrefix ? visionPrefix : "") + chunk.text.slice(0, 1000),
+        ...(i === 0 && visionDescription ? { visionDescription: visionDescription.slice(0, 1000) } : {}),
       },
     }));
 
@@ -81,14 +87,18 @@ export async function ingestFromBuffer(
     if (buffer.length > MAX_FILE_SIZE_BYTES) {
       return { success: false, error: "File too large." };
     }
-    const { text, pageNumber } = await extractTextFromBuffer(buffer, fileName);
+    const { text, pageNumber, visionDescription } = await extractTextFromBuffer(buffer, fileName);
 
     if (!text?.trim()) {
       return { success: false, error: "No text could be extracted from the file." };
     }
 
     const chunks = splitTextIntoChunks(text, 1000, 200);
-    const embeddings = await embedTexts(chunks.map((c) => c.text));
+    const visionPrefix = visionDescription ? `[Vision: ${visionDescription}]\n\n` : "";
+    const textsForEmbed = chunks.map((c, i) =>
+      i === 0 && visionPrefix ? visionPrefix + c.text : c.text
+    );
+    const embeddings = await embedTexts(textsForEmbed);
 
     const indexName = getIndexName();
     const pinecone = getPineconeClient();
@@ -100,7 +110,8 @@ export async function ingestFromBuffer(
       metadata: {
         fileName,
         pageNumber: pageNumber ?? 1,
-        text: chunk.text.slice(0, 1000),
+        text: (i === 0 && visionPrefix ? visionPrefix : "") + chunk.text.slice(0, 1000),
+        ...(i === 0 && visionDescription ? { visionDescription: visionDescription.slice(0, 1000) } : {}),
       },
     }));
 
@@ -122,7 +133,7 @@ async function fetchFileAsBuffer(url: string): Promise<Buffer> {
 async function extractTextFromBuffer(
   buffer: Buffer,
   fileName: string
-): Promise<{ text: string; pageNumber?: number }> {
+): Promise<{ text: string; pageNumber?: number; visionDescription?: string }> {
   const ext = fileName.split(".").pop()?.toLowerCase();
 
   if (ext === "pdf") {
@@ -131,15 +142,23 @@ async function extractTextFromBuffer(
       (pdfParseModule as { default?: (b: Buffer) => Promise<{ text?: string; numpages?: number }> }).default ??
       (pdfParseModule as unknown as (b: Buffer) => Promise<{ text?: string; numpages?: number }>);
     const data = await fn(buffer);
+    let visionDescription = "";
+    try {
+      visionDescription = await describePdfWithVision(buffer);
+    } catch (_) {
+      // non-fatal; continue with text only
+    }
     return {
       text: data.text ?? "",
       pageNumber: data.numpages ? 1 : undefined,
+      visionDescription: visionDescription || undefined,
     };
   }
 
   return {
     text: buffer.toString("utf-8"),
     pageNumber: 1,
+    visionDescription: undefined,
   };
 }
 
