@@ -93,7 +93,7 @@ ${context}`;
 
     const result = await streamText({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- @ai-sdk/google peer type mismatch with ai
-      model: google("gemini-2.0-flash") as any,
+      model: google("gemini-2.5-flash") as any,
       system: systemPrompt,
       messages: messages.map((m) => ({ role: m.role as "user" | "system" | "assistant", content: m.content })),
       onFinish: ({ usage }) => {

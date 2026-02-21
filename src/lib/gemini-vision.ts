@@ -3,7 +3,7 @@
  * Call this for PDFs to get richer context for RAG.
  */
 
-const VISION_MODEL = "gemini-2.0-flash";
+const VISION_MODEL = "gemini-2.5-flash";
 const MAX_PDF_BYTES = 4 * 1024 * 1024; // 4 MB to avoid timeout
 
 function getApiKey(): string {

@@ -6,7 +6,7 @@ Private document vault: upload files and get instant, cited answers.
 
 - **Next.js** (App Router) + **TypeScript** + **Tailwind** — UI and API
 - **Pinecone** — vector store for embeddings
-- **Google Gemini** — `text-embedding-004` (768 dims) for embeddings, `gemini-2.0-flash` for chat and vision
+- **Google Gemini** — `text-embedding-004` (768 dims) for embeddings, `gemini-2.5-flash` for chat and vision
 - **Prisma** + **PostgreSQL** — chat sessions and message history
 - **pdf-parse** — PDF text extraction; **Gemini Vision** — PDF images/charts/tables description
 
