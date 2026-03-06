@@ -1,16 +1,17 @@
 "use server";
 
-import { getPineconeClient, getIndexName } from "@/lib/vector-db";
-import { splitTextIntoChunks } from "@/lib/text-splitter";
+import { getPineconeClient, getIndexName, getNamespaceForUser } from "@/lib/vector-db";
+import { splitTextIntoChunks, splitTextIntoSemanticChunks } from "@/lib/text-splitter";
 import { embedTexts } from "@/lib/gemini-embeddings";
 import { describePdfWithVision } from "@/lib/gemini-vision";
+import { toSparseVector } from "@/lib/sparse-vector";
 
 /**
  * Gemini text-embedding-004 produces 768-dimensional vectors.
  * Your Pinecone index must be created with dimension 768 (not 1536).
  */
 
-const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
+const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
 
 export type IngestResult = { success: true; chunksCount: number } | { success: false; error: string };
 
@@ -32,7 +33,8 @@ function normalizeIngestError(err: unknown): string {
  */
 export async function ingestFromFileUrl(
   fileUrl: string,
-  fileName: string
+  fileName: string,
+  opts?: { userId?: string | null; documentId?: string }
 ): Promise<IngestResult> {
   try {
     const buffer = await fetchFileAsBuffer(fileUrl);
@@ -45,7 +47,8 @@ export async function ingestFromFileUrl(
       return { success: false, error: "No text could be extracted from the file." };
     }
 
-    const chunks = splitTextIntoChunks(text, 1000, 200);
+    const useSemantic = process.env.RAG_CHUNKING === "semantic";
+    const chunks = useSemantic ? splitTextIntoSemanticChunks(text, 1000, 200) : splitTextIntoChunks(text, 1000, 200);
     const visionPrefix = visionDescription ? `[Vision: ${visionDescription}]\n\n` : "";
     const textsForEmbed = chunks.map((c, i) =>
       i === 0 && visionPrefix ? visionPrefix + c.text : c.text
@@ -54,15 +57,20 @@ export async function ingestFromFileUrl(
 
     const indexName = getIndexName();
     const pinecone = getPineconeClient();
-    const index = pinecone.index(indexName);
+    const namespace = getNamespaceForUser(opts?.userId ?? null);
+    const index = pinecone.index(indexName).namespace(namespace);
 
+    const sparseEnabled = process.env.PINECONE_SPARSE_ENABLED === "true";
     const records = chunks.map((chunk, i) => ({
       id: `${sanitizeId(fileName)}-${i}-${Date.now()}`,
       values: embeddings[i]!,
+      ...(sparseEnabled ? { sparseValues: toSparseVector(chunk.text) } : {}),
       metadata: {
         fileName,
         pageNumber: pageNumber ?? 1,
         text: (i === 0 && visionPrefix ? visionPrefix : "") + chunk.text.slice(0, 1000),
+        ...(opts?.userId ? { userId: opts.userId } : {}),
+        ...(opts?.documentId ? { documentId: opts.documentId } : {}),
         ...(i === 0 && visionDescription ? { visionDescription: visionDescription.slice(0, 1000) } : {}),
       },
     }));
@@ -81,7 +89,8 @@ export async function ingestFromFileUrl(
  */
 export async function ingestFromBuffer(
   buffer: Buffer,
-  fileName: string
+  fileName: string,
+  opts?: { userId?: string | null; documentId?: string }
 ): Promise<IngestResult> {
   try {
     if (buffer.length > MAX_FILE_SIZE_BYTES) {
@@ -93,7 +102,8 @@ export async function ingestFromBuffer(
       return { success: false, error: "No text could be extracted from the file." };
     }
 
-    const chunks = splitTextIntoChunks(text, 1000, 200);
+    const useSemantic = process.env.RAG_CHUNKING === "semantic";
+    const chunks = useSemantic ? splitTextIntoSemanticChunks(text, 1000, 200) : splitTextIntoChunks(text, 1000, 200);
     const visionPrefix = visionDescription ? `[Vision: ${visionDescription}]\n\n` : "";
     const textsForEmbed = chunks.map((c, i) =>
       i === 0 && visionPrefix ? visionPrefix + c.text : c.text
@@ -102,15 +112,20 @@ export async function ingestFromBuffer(
 
     const indexName = getIndexName();
     const pinecone = getPineconeClient();
-    const index = pinecone.index(indexName);
+    const namespace = getNamespaceForUser(opts?.userId ?? null);
+    const index = pinecone.index(indexName).namespace(namespace);
 
+    const sparseEnabled = process.env.PINECONE_SPARSE_ENABLED === "true";
     const records = chunks.map((chunk, i) => ({
       id: `${sanitizeId(fileName)}-${i}-${Date.now()}`,
       values: embeddings[i]!,
+      ...(sparseEnabled ? { sparseValues: toSparseVector(chunk.text) } : {}),
       metadata: {
         fileName,
         pageNumber: pageNumber ?? 1,
         text: (i === 0 && visionPrefix ? visionPrefix : "") + chunk.text.slice(0, 1000),
+        ...(opts?.userId ? { userId: opts.userId } : {}),
+        ...(opts?.documentId ? { documentId: opts.documentId } : {}),
         ...(i === 0 && visionDescription ? { visionDescription: visionDescription.slice(0, 1000) } : {}),
       },
     }));
@@ -153,6 +168,28 @@ async function extractTextFromBuffer(
       pageNumber: data.numpages ? 1 : undefined,
       visionDescription: visionDescription || undefined,
     };
+  }
+
+  if (ext === "docx") {
+    const mammothModule = await import("mammoth");
+    const mammoth = (mammothModule as any).default ?? mammothModule;
+    const result = await mammoth.extractRawText({ buffer });
+    return { text: result?.value ?? "", pageNumber: 1, visionDescription: undefined };
+  }
+
+  if (ext === "xlsx") {
+    const xlsxModule = await import("xlsx");
+    const xlsx = (xlsxModule as any).default ?? xlsxModule;
+    const workbook = xlsx.read(buffer, { type: "buffer" });
+    const sheets = workbook.SheetNames ?? [];
+    const parts: string[] = [];
+    for (const name of sheets) {
+      const sheet = workbook.Sheets[name];
+      if (!sheet) continue;
+      const csv = xlsx.utils.sheet_to_csv(sheet);
+      if (csv.trim()) parts.push(`Sheet: ${name}\n${csv}`);
+    }
+    return { text: parts.join("\n\n"), pageNumber: 1, visionDescription: undefined };
   }
 
   return {

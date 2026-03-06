@@ -1,7 +1,8 @@
 "use client";
 
-import { useChat } from "ai/react";
-import { useEffect, useRef } from "react";
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport } from "ai";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import { parseSourcesFromContent, stripSourcesFromContent } from "@/lib/parse-sources";
@@ -17,6 +18,13 @@ type ChatPanelProps = {
   onSessionsRefresh: () => void;
 };
 
+function messageText(message: { parts: Array<{ type: string; text?: string }> }): string {
+  return (message.parts ?? [])
+    .filter((p) => p.type === "text" && typeof p.text === "string")
+    .map((p) => p.text as string)
+    .join("");
+}
+
 export function ChatPanel({
   sessionId,
   initialMessages,
@@ -28,26 +36,52 @@ export function ChatPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
-    api: "/api/chat",
+  const [input, setInput] = useState("");
+
+  const transport = useMemo(() => {
+    return new DefaultChatTransport({
+      api: "/api/chat",
+      body: () => body,
+    });
+  }, [body]);
+
+  const { messages, sendMessage, status } = useChat({
     id: sessionId ?? undefined,
-    initialMessages: initialMessages.map((m) => ({
+    transport,
+    messages: initialMessages.map((m) => ({
       id: m.id ?? crypto.randomUUID(),
       role: m.role as "user" | "assistant" | "system",
-      content: m.content,
+      parts: [{ type: "text" as const, text: m.content }],
     })),
-    body,
-    onFinish: async (message) => {
-      if (sessionId) {
-        const next = [...messages, message];
-        await saveMessages(
-          sessionId,
-          next.map((m) => ({ role: m.role, content: typeof m.content === "string" ? m.content : "" }))
-        );
-        onSessionsRefresh();
-      }
+    onFinish: async ({ messages: finalMessages }) => {
+      if (!sessionId) return;
+      await saveMessages(
+        sessionId,
+        finalMessages.map((m) => ({ role: m.role, content: messageText(m as any) }))
+      );
+      onSessionsRefresh();
     },
   });
+
+  const isLoading = status === "submitted" || status === "streaming";
+
+  const handleSubmit = useCallback(
+    async (e?: { preventDefault?: () => void }) => {
+      e?.preventDefault?.();
+      const text = input.trim();
+      if (!text || isLoading) return;
+      setInput("");
+      await sendMessage({ text });
+    },
+    [input, isLoading, sendMessage]
+  );
+
+  const handleInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      setInput(event.target.value);
+    },
+    []
+  );
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -55,7 +89,12 @@ export function ChatPanel({
 
   return (
     <>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-6 pb-4">
+      <div
+        ref={scrollRef}
+        className="flex-1 overflow-y-auto space-y-6 pb-4"
+        aria-live="polite"
+        aria-relevant="additions text"
+      >
         {messages.length === 0 && (
           <p className="text-center text-zinc-500 text-sm py-8">
             Ask a question about your documents.
@@ -63,7 +102,7 @@ export function ChatPanel({
         )}
         {messages.map((m) => {
           if (m.role === "assistant") {
-            const content = typeof m.content === "string" ? m.content : "";
+            const content = messageText(m as any);
             const sources = parseSourcesFromContent(content);
             const bodyText = stripSourcesFromContent(content);
             return (
@@ -141,7 +180,7 @@ export function ChatPanel({
                   <span className="text-xs font-medium opacity-90">You</span>
                 </div>
                 <div className="text-sm whitespace-pre-wrap break-words">
-                  {typeof m.content === "string" ? m.content : null}
+                  {messageText(m as any)}
                 </div>
               </div>
               <div className="shrink-0 w-8 h-8 rounded-full bg-[var(--muted)] flex items-center justify-center">

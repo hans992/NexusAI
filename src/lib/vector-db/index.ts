@@ -14,3 +14,8 @@ export function getPineconeClient(): Pinecone {
 export function getIndexName(): string {
   return process.env.PINECONE_INDEX_NAME ?? "nexus-ai";
 }
+
+export function getNamespaceForUser(userId?: string | null): string {
+  if (!userId) return "public";
+  return `user_${userId}`;
+}

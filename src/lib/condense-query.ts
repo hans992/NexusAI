@@ -23,7 +23,7 @@ export async function condenseConversationToQuery(
     model: google("gemini-2.5-flash") as any,
     system: `You are a query rewriter. Given a conversation and the latest user message, output a single standalone question that captures what the user is asking, including any context from the conversation (e.g. pronouns like "it", "that" should be resolved). Output only the question, no explanation.`,
     prompt: `Conversation:\n${conversation}\n\nStandalone question:`,
-    maxTokens: 150,
+    maxOutputTokens: 150,
   });
 
   return text.trim() || last.content?.trim() || "";

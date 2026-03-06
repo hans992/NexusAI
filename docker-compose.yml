@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nexus
+      POSTGRES_PASSWORD: nexus
+      POSTGRES_DB: nexus_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  app:
+    build: .
+    depends_on:
+      - db
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://nexus:nexus@db:5432/nexus_ai?schema=public
+      # Provide these at runtime for full functionality:
+      # GOOGLE_GENERATIVE_AI_API_KEY:
+      # PINECONE_API_KEY:
+      # PINECONE_INDEX_NAME:
+      # UPLOADTHING_TOKEN:
+      # BETTER_AUTH_SECRET:
+      # BETTER_AUTH_URL: http://localhost:3000
+      # GOOGLE_CLIENT_ID:
+      # GOOGLE_CLIENT_SECRET:
+      # UPSTASH_REDIS_REST_URL:
+      # UPSTASH_REDIS_REST_TOKEN:
+
+volumes:
+  db_data:
+

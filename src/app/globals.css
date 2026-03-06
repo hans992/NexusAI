@@ -3,14 +3,33 @@
 @tailwind utilities;
 
 :root {
-  --background: #0a0a0a;
-  --foreground: #fafafa;
-  --muted: #27272a;
-  --border: #27272a;
-  --accent: #3b82f6;
+  /* Doc palette */
+  --bg-primary: #0a0a0a;
+  --bg-surface: #111111;
+  --bg-elevated: #1a1a1a;
+  --border-color: #2a2a2a;
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --accent-primary: #3b82f6;
+  --accent-success: #22c55e;
+  --accent-warning: #f59e0b;
+  --accent-error: #ef4444;
+
+  /* Backwards-compatible tokens used in components */
+  --background: var(--bg-primary);
+  --surface: var(--bg-surface);
+  --elevated: var(--bg-elevated);
+  --foreground: var(--text-primary);
+  --muted: var(--bg-elevated);
+  --border: var(--border-color);
+  --accent: var(--accent-primary);
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
+}
+
+::selection {
+  background: color-mix(in oklab, var(--accent) 35%, transparent);
 }

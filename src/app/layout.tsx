@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
+import { Inter } from "next/font/google";
 import { Toaster } from "sonner";
+import "@uploadthing/react/styles.css";
 import "./globals.css";
+
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "Nexus AI",
@@ -14,7 +18,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className="min-h-screen antialiased bg-[var(--background)] text-[var(--foreground)]">
+      <body className={`${inter.className} min-h-screen antialiased bg-[var(--background)] text-[var(--foreground)]`}>
         {children}
         <Toaster position="top-right" richColors closeButton />
       </body>
