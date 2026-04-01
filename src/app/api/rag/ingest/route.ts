@@ -20,6 +20,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Ingestion failed.";
+    console.error("[rag.ingest] failed", { message, error });
     const status = message === "Unauthorized" ? 401 : 500;
     return NextResponse.json({ error: message }, { status });
   }

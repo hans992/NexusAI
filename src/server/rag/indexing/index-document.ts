@@ -1,6 +1,7 @@
 import { embedTexts } from "@/lib/gemini-embeddings";
 import { createServerSupabaseClient } from "@/server/db/supabase-server";
 import type { ChunkResult } from "@/server/rag/ingestion/chunk-document";
+import { toPgVectorLiteral } from "@/server/rag/indexing/pgvector";
 
 export async function indexDocumentChunks(params: {
   documentId: string;
@@ -21,7 +22,7 @@ export async function indexDocumentChunks(params: {
     page_number: params.pageNumber ?? 1,
     token_count: chunk.tokenEstimate,
     metadata: { fileName: params.fileName, chunkIndex: chunk.chunkIndex },
-    embedding: embeddings[index],
+    embedding: toPgVectorLiteral(embeddings[index] ?? []),
   }));
 
   // Idempotent re-indexing for retries.
