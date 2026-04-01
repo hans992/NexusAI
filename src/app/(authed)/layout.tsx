@@ -1,18 +1,14 @@
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { isAuthEnabled } from "@/lib/auth";
-import { getSessionFromRequestHeaders } from "@/lib/auth-server";
+import { getAuthenticatedUser } from "@/server/auth/session";
 
 export default async function AuthedLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  if (isAuthEnabled()) {
-    const session = await getSessionFromRequestHeaders(await headers());
-    if (!session?.user) {
-      redirect("/sign-in?callbackUrl=/");
-    }
+  const user = await getAuthenticatedUser();
+  if (!user) {
+    redirect("/sign-in?callbackUrl=/");
   }
 
   return children;

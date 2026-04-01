@@ -3,16 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { UploadDropzone } from "@/lib/uploadthing";
+import { UploadZone } from "@/components/upload/UploadZone";
 import {
   createSession,
   getSessions,
   getSession,
   deleteSession,
 } from "@/app/actions/chat";
-import { createDocumentAndIngest } from "@/app/actions/documents";
 import { ChatPanel } from "@/components/chat/ChatPanel";
-import { authClient } from "@/lib/auth-client";
 import { FileText, MessageSquarePlus, Trash2, LogOut } from "lucide-react";
 import {
   Select,
@@ -21,9 +19,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { deleteDocument } from "@/app/actions/documents";
 import { Button } from "@/components/ui/button";
 import { DocumentViewerDialog } from "@/components/documents/DocumentViewerDialog";
+import { getSupabaseBrowserClient } from "@/server/db/supabase-browser";
 
 export type DocumentListItem = {
   id: string;
@@ -36,24 +34,39 @@ export type DocumentListItem = {
   createdAt: string;
 };
 
+type UsageSummary = {
+  documents: number;
+  chatSessions: number;
+  recentTokens: number;
+};
+
 export default function HomePage() {
+  const supabase = getSupabaseBrowserClient();
   const [documentList, setDocumentList] = useState<DocumentListItem[]>([]);
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerDoc, setViewerDoc] = useState<DocumentListItem | null>(null);
-  const [selectedFile, setSelectedFile] = useState<string>("all");
+  const [selectedDocumentId, setSelectedDocumentId] = useState<string>("all");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [ingesting, setIngesting] = useState(false);
   const [sessions, setSessions] = useState<Awaited<ReturnType<typeof getSessions>>>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [loadedMessages, setLoadedMessages] = useState<{ id?: string; role: string; content: string }[]>([]);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const loadingToastIdRef = useRef<string | number | null>(null);
-  const { data: session } = authClient.useSession();
 
   const fetchDocuments = useCallback(() => {
-    fetch("/api/documents")
+    fetch("/api/rag/documents")
       .then((r) => (r.ok ? r.json() : []))
       .then((list: DocumentListItem[]) => setDocumentList(Array.isArray(list) ? list : []))
       .catch(() => setDocumentList([]));
+  }, []);
+
+  const fetchUsage = useCallback(() => {
+    fetch("/api/rag/usage")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: UsageSummary | null) => setUsage(data))
+      .catch(() => setUsage(null));
   }, []);
 
   const fetchSessions = useCallback(async () => {
@@ -63,13 +76,14 @@ export default function HomePage() {
   }, []);
 
   const chatBody = {
-    selectedFile: selectedFile === "all" ? null : selectedFile,
+    selectedDocumentId: selectedDocumentId === "all" ? null : selectedDocumentId,
     sessionId: sessionId ?? undefined,
   };
 
   useEffect(() => {
     fetchDocuments();
-  }, [fetchDocuments]);
+    fetchUsage();
+  }, [fetchDocuments, fetchUsage]);
 
   useEffect(() => {
     (async () => {
@@ -81,6 +95,22 @@ export default function HomePage() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    supabase.auth.getSession().then((result: { data: { session: { user: { email?: string | null } } | null } }) => {
+      const { data } = result;
+      setUserEmail(data.session?.user.email ?? null);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (
+        _event: string,
+        session: { user: { email?: string | null } } | null
+      ) => {
+      setUserEmail(session?.user.email ?? null);
+      }
+    );
+    return () => listener.subscription.unsubscribe();
+  }, [supabase.auth]);
 
   const handleCopy = async (id: string, text: string) => {
     await navigator.clipboard.writeText(text);
@@ -113,30 +143,39 @@ export default function HomePage() {
     } else await fetchSessions();
   };
 
-  const handleUploadComplete = useCallback(
-    async (res: { url: string; name: string; size: number; type?: string }[] | undefined) => {
-      const file = res?.[0];
-      if (!file?.url) {
-        toast.error("Upload completed but no file URL received.");
-        return;
-      }
+  const handleUpload = useCallback(
+    async (file: File) => {
       if (ingesting) return;
       setIngesting(true);
       loadingToastIdRef.current = toast.loading("Processing document...");
       try {
-        const result = await createDocumentAndIngest(
-          file.url,
-          file.name,
-          file.size,
-          file.type ?? "application/octet-stream"
-        );
+        const form = new FormData();
+        form.append("file", file);
+        const uploadRes = await fetch("/api/rag/upload", {
+          method: "POST",
+          body: form,
+        });
+        if (!uploadRes.ok) {
+          const err = await uploadRes.json().catch(() => ({ error: "Upload failed." }));
+          throw new Error(err.error ?? "Upload failed.");
+        }
+        const upload = await uploadRes.json();
+
+        const ingestRes = await fetch("/api/rag/ingest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ documentId: upload.documentId }),
+        });
+        const result = await ingestRes.json();
+
         toast.dismiss(loadingToastIdRef.current ?? undefined);
         loadingToastIdRef.current = null;
-        if (result.success) {
+        if (ingestRes.ok && result.success) {
           toast.success(`Document added to vault (${result.chunksCount} chunks)`);
           fetchDocuments();
+          fetchUsage();
         } else {
-          toast.error(result.error);
+          toast.error(result.error ?? "Ingestion failed.");
         }
       } catch (err) {
         toast.dismiss(loadingToastIdRef.current ?? undefined);
@@ -146,7 +185,7 @@ export default function HomePage() {
         setIngesting(false);
       }
     },
-    [ingesting, fetchDocuments]
+    [ingesting, fetchDocuments, fetchUsage]
   );
 
   return (
@@ -200,14 +239,17 @@ export default function HomePage() {
               Private document vault — ask questions, get cited answers.
             </p>
           </div>
-          {session?.user && (
+          {userEmail && (
             <div className="flex items-center gap-2">
-              <span className="text-sm text-zinc-400 truncate max-w-[140px]" title={session.user.email}>
-                {session.user.email}
+              <span className="text-sm text-zinc-400 truncate max-w-[180px]" title={userEmail}>
+                {userEmail}
               </span>
               <button
                 type="button"
-                onClick={() => authClient.signOut()}
+                onClick={async () => {
+                  await supabase.auth.signOut();
+                  window.location.href = "/sign-in";
+                }}
                 className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm text-zinc-400 hover:bg-[var(--muted)] hover:text-zinc-200 transition-colors flex items-center gap-1.5"
                 aria-label="Sign out"
               >
@@ -220,17 +262,21 @@ export default function HomePage() {
 
         <main className="flex-1 flex flex-col max-w-2xl w-full mx-auto px-4 py-6 min-h-0 w-full">
           <div className="mb-4 shrink-0">
-            <UploadDropzone
-              endpoint="documentUploader"
-              disabled={ingesting}
-              onClientUploadComplete={handleUploadComplete}
-              onUploadError={(err) => {
-                toast.error(err?.message ?? "Upload failed.");
-              }}
-              content={{
-                allowedContent: "PDF, TXT, MD up to 32MB",
-              }}
-            />
+            <UploadZone onFileSelect={handleUpload} disabled={ingesting} />
+          </div>
+          <div className="mb-4 grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+              <div className="text-xs text-zinc-500">Documents</div>
+              <div className="text-xl font-semibold">{usage?.documents ?? 0}</div>
+            </div>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+              <div className="text-xs text-zinc-500">Chat sessions</div>
+              <div className="text-xl font-semibold">{usage?.chatSessions ?? 0}</div>
+            </div>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+              <div className="text-xs text-zinc-500">Recent tokens</div>
+              <div className="text-xl font-semibold">{usage?.recentTokens ?? 0}</div>
+            </div>
           </div>
           <div className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--surface)] overflow-hidden">
             <div className="px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
@@ -272,12 +318,18 @@ export default function HomePage() {
                         onClick={async () => {
                           const ok = confirm(`Delete ${doc.fileName}? This will remove its vectors too.`);
                           if (!ok) return;
-                          const res = await deleteDocument(doc.id);
-                          if (res.success) {
+                          const res = await fetch("/api/rag/documents", {
+                            method: "DELETE",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ documentId: doc.id }),
+                          });
+                          if (res.ok) {
                             toast.success("Document deleted.");
                             fetchDocuments();
+                            fetchUsage();
                           } else {
-                            toast.error(res.error);
+                            const err = await res.json().catch(() => ({ error: "Delete failed." }));
+                            toast.error(err.error ?? "Delete failed.");
                           }
                         }}
                       >
@@ -292,14 +344,14 @@ export default function HomePage() {
           <div className="flex flex-wrap items-center gap-2 mb-4 shrink-0">
             <span className="text-xs font-medium text-zinc-500">Sources:</span>
             <div className="w-full sm:w-[320px]">
-              <Select value={selectedFile} onValueChange={setSelectedFile}>
+              <Select value={selectedDocumentId} onValueChange={setSelectedDocumentId}>
                 <SelectTrigger>
                   <SelectValue placeholder="All documents" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All documents</SelectItem>
                   {documentList.map((doc) => (
-                    <SelectItem key={doc.id} value={doc.fileName}>
+                    <SelectItem key={doc.id} value={doc.id}>
                       {doc.fileName}
                       {doc.status === "PROCESSING" && " (processing...)"} 
                       {doc.status === "FAILED" && " (failed)"}
@@ -308,10 +360,10 @@ export default function HomePage() {
                 </SelectContent>
               </Select>
             </div>
-            {selectedFile !== "all" && (
+            {selectedDocumentId !== "all" && (
               <span className="inline-flex items-center gap-1 rounded-md bg-[var(--accent)]/20 px-2 py-0.5 text-xs text-[var(--accent)]">
                 <FileText className="h-3 w-3" />
-                {selectedFile}
+                {documentList.find((d) => d.id === selectedDocumentId)?.fileName ?? "Selected document"}
               </span>
             )}
           </div>

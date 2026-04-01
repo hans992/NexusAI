@@ -12,7 +12,7 @@ import { Loader2, Send, User, Copy, Check, FileText } from "lucide-react";
 type ChatPanelProps = {
   sessionId: string | null;
   initialMessages: { id?: string; role: string; content: string }[];
-  body: { selectedFile?: string | null; sessionId?: string };
+  body: { selectedDocumentId?: string | null; sessionId?: string };
   onCopy: (id: string, text: string) => void;
   copiedId: string | null;
   onSessionsRefresh: () => void;
@@ -40,7 +40,7 @@ export function ChatPanel({
 
   const transport = useMemo(() => {
     return new DefaultChatTransport({
-      api: "/api/chat",
+      api: "/api/rag/query",
       body: () => body,
     });
   }, [body]);

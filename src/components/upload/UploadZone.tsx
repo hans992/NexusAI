@@ -22,7 +22,7 @@ export function UploadZone({ onFileSelect, className, disabled }: UploadZoneProp
       <input
         type="file"
         className="hidden"
-        accept=".pdf,.txt,.md"
+        accept=".pdf,.txt,.docx"
         disabled={disabled}
         onChange={(e) => {
           const file = e.target.files?.[0];
@@ -33,7 +33,7 @@ export function UploadZone({ onFileSelect, className, disabled }: UploadZoneProp
       <span className="text-sm font-medium text-zinc-400">
         Drop a file or click to upload
       </span>
-      <span className="text-xs text-zinc-600">PDF, TXT, MD</span>
+      <span className="text-xs text-zinc-600">PDF, DOCX, TXT</span>
     </label>
   );
 }
